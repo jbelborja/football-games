@@ -2,7 +2,7 @@ name: Deploy React site to Pages
 
 on:
   push:
-    branches: ['main'] # O 'master', según tu rama principal
+    branches: ['main']
   workflow_dispatch:
 
 permissions:
@@ -30,19 +30,20 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      # Configure Pages ANTES del build para inyectar variables de entorno si se requieren
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
       - name: Install dependencies
         run: npm ci
 
       - name: Build project
         run: npm run build
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './dist' # En Vite la carpeta de build es 'dist'
+          path: './dist' # Cambiar a './build' si usas Create React App
 
       - name: Deploy to GitHub Pages
         id: deployment
