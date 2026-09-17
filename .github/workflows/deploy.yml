@@ -3,6 +3,7 @@ name: Deploy React site to Pages
 on:
   push:
     branches: ['main'] # O 'master', según tu rama principal
+  workflow_dispatch:
 
 permissions:
   contents: read
