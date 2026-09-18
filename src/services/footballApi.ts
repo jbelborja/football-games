@@ -3,20 +3,16 @@ import { Match, StandingsTeamEntry, JornadaDate, MatchDetailEvent, HighlightVide
 const BASE_URL = 'https://site.api.espn.com';
 const PROXY_URL = '/api/espn';
 
-// Use proxy in dev if needed, or direct in production
+// Use direct ESPN API in production, fallback to Vite proxy in local dev if needed
 async function fetchWithFallback(endpoint: string) {
-  // Try direct first
+  // 1. Try direct ESPN endpoint (no custom headers to prevent CORS preflight issues)
   try {
-    const res = await fetch(`${BASE_URL}${endpoint}`, {
-      headers: {
-        'Accept': 'application/json'
-      }
-    });
+    const res = await fetch(`${BASE_URL}${endpoint}`);
     if (res.ok) {
       return await res.json();
     }
   } catch {
-    // If direct failed (e.g. CORS on dev), try Vite proxy
+    // If direct failed (e.g. CORS on dev server), try Vite proxy
     try {
       const res = await fetch(`${PROXY_URL}${endpoint}`);
       if (res.ok) {
@@ -193,47 +189,98 @@ export interface MatchesResponse {
   fromCache?: boolean;
 }
 
-export async function fetchMatches(dateRange?: string): Promise<MatchesResponse> {
-  const cacheKey = `laliga_matches_${dateRange || 'default'}`;
-  
-  try {
-    // If no date range specified, fetch a span of ~25 days (7 days back, 18 days forward)
-    // to give plenty of "Just Played" and "Next Up"
-    let query = '';
-    if (dateRange) {
-      query = `?dates=${dateRange}`;
-    } else {
-      const now = new Date();
-      const past = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
-      const future = new Date(now.getTime() + 20 * 24 * 60 * 60 * 1000);
-      query = `?dates=${toYYYYMMDD(past)}-${toYYYYMMDD(future)}`;
-    }
+export async function fetchMatches(specificDate?: string): Promise<MatchesResponse> {
+  const cacheKey = `laliga_matches_${specificDate || 'default'}`;
 
-    const data = await fetchWithFallback(`/apis/site/v2/sports/soccer/esp.1/scoreboard${query}`);
-    
-    // Parse calendar dates
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let allRawEvents: any[] = [];
     const calendar: JornadaDate[] = [];
-    if (Array.isArray(data.leagues?.[0]?.calendar)) {
-      data.leagues[0].calendar.forEach((iso: string) => {
+
+    if (specificDate) {
+      // 1. Fetch specific single date (ESPN accepts ?dates=YYYYMMDD)
+      const data = await fetchWithFallback(`/apis/site/v2/sports/soccer/esp.1/scoreboard?dates=${specificDate}`);
+      allRawEvents = data.events || [];
+
+      if (Array.isArray(data.leagues?.[0]?.calendar)) {
+        data.leagues[0].calendar.forEach((iso: string) => {
+          const d = new Date(iso);
+          const yyyymmdd = toYYYYMMDD(d);
+          const label = d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+          if (!calendar.some(c => c.dateStr === yyyymmdd)) {
+            calendar.push({ dateStr: yyyymmdd, label });
+          }
+        });
+      }
+    } else {
+      // 2. Default Main View:
+      // ESPN soccer scoreboard returns HTTP 400 if arbitrary date ranges (YYYYMMDD-YYYYMMDD) are passed.
+      // So we first fetch the base scoreboard (which returns today's games + the complete season calendar).
+      const baseData = await fetchWithFallback('/apis/site/v2/sports/soccer/esp.1/scoreboard');
+      if (Array.isArray(baseData.events)) {
+        allRawEvents.push(...baseData.events);
+      }
+
+      // Parse all calendar matchday dates
+      const rawCalendar: string[] = baseData.leagues?.[0]?.calendar || [];
+      const calendarDatesSet: { dateStr: string; label: string; iso: string }[] = [];
+
+      rawCalendar.forEach((iso: string) => {
         const d = new Date(iso);
         const yyyymmdd = toYYYYMMDD(d);
         const label = d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-        if (!calendar.some(c => c.dateStr === yyyymmdd)) {
-          calendar.push({
-            dateStr: yyyymmdd,
-            label
-          });
+        if (!calendarDatesSet.some(c => c.dateStr === yyyymmdd)) {
+          calendarDatesSet.push({ dateStr: yyyymmdd, label, iso });
         }
       });
+
+      calendar.push(...calendarDatesSet.map(({ dateStr, label }) => ({ dateStr, label })));
+
+      // Find nearby match dates: 3 previous matchdays and 3 upcoming matchdays
+      const todayYYYYMMDD = toYYYYMMDD(new Date());
+      const pastDates = calendarDatesSet
+        .filter(c => c.dateStr < todayYYYYMMDD)
+        .slice(-3)
+        .map(c => c.dateStr);
+
+      const upcomingDates = calendarDatesSet
+        .filter(c => c.dateStr >= todayYYYYMMDD)
+        .slice(0, 3)
+        .map(c => c.dateStr);
+
+      const targetDates = Array.from(new Set([...pastDates, ...upcomingDates]));
+
+      // Fetch nearby dates in parallel using reliable single-date endpoints
+      if (targetDates.length > 0) {
+        const dateResults = await Promise.allSettled(
+          targetDates.map(d => fetchWithFallback(`/apis/site/v2/sports/soccer/esp.1/scoreboard?dates=${d}`))
+        );
+
+        dateResults.forEach(res => {
+          if (res.status === 'fulfilled' && Array.isArray(res.value?.events)) {
+            allRawEvents.push(...res.value.events);
+          }
+        });
+      }
     }
 
-    const rawEvents = data.events || [];
-    const matches: Match[] = rawEvents
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((ev: any) => parseEvent(ev))
+    // Deduplicate raw events by ID
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const seenEventIds = new Set<string>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const uniqueEvents: any[] = [];
+    allRawEvents.forEach(ev => {
+      if (ev && ev.id && !seenEventIds.has(ev.id)) {
+        seenEventIds.add(ev.id);
+        uniqueEvents.push(ev);
+      }
+    });
+
+    const matches: Match[] = uniqueEvents
+      .map(ev => parseEvent(ev))
       .filter((m: Match | null): m is Match => m !== null);
 
-    // Sort: live first, then past by date desc, then upcoming by date asc
+    // Sort matches chronologically
     matches.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     const result: MatchesResponse = {
@@ -242,14 +289,14 @@ export async function fetchMatches(dateRange?: string): Promise<MatchesResponse>
       lastUpdated: new Date()
     };
 
-    // Save cache
+    // Save to localStorage cache
     try {
       localStorage.setItem(cacheKey, JSON.stringify({
         ...result,
         lastUpdated: result.lastUpdated.toISOString()
       }));
     } catch {
-      // ignore quota errors
+      // ignore storage quota errors
     }
 
     return result;
@@ -274,7 +321,7 @@ export async function fetchMatches(dateRange?: string): Promise<MatchesResponse>
 
 export async function fetchStandings(): Promise<{ standings: StandingsTeamEntry[]; lastUpdated: Date; fromCache?: boolean }> {
   const cacheKey = 'laliga_standings';
-  
+
   try {
     const data = await fetchWithFallback('/apis/v2/sports/soccer/esp.1/standings');
     const entries = data.children?.[0]?.standings?.entries || [];

@@ -151,6 +151,36 @@ export const App: React.FC = () => {
     return filteredMatches.filter(m => m.status.state === 'pre').length;
   }, [filteredMatches]);
 
+  const handleSelectDate = useCallback(async (dateStr: string | null) => {
+    setSelectedDateStr(dateStr);
+    if (!dateStr) return;
+
+    const hasMatchesForDate = matches.some(m => {
+      const d = new Date(m.date);
+      const yyyymmdd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+      return yyyymmdd === dateStr;
+    });
+
+    if (!hasMatchesForDate) {
+      try {
+        setIsLoading(true);
+        const res = await fetchMatches(dateStr);
+        if (res.matches.length > 0) {
+          setMatches(prev => {
+            const map = new Map<string, Match>();
+            prev.forEach(m => map.set(m.id, m));
+            res.matches.forEach(m => map.set(m.id, m));
+            return Array.from(map.values()).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+          });
+        }
+      } catch (e) {
+        console.warn('Could not fetch matches for date:', dateStr, e);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  }, [matches]);
+
   // Handler for selecting team from standings
   const handleSelectTeamFromStandings = (teamId: string) => {
     setSelectedTeamId(teamId);
@@ -201,7 +231,7 @@ export const App: React.FC = () => {
               selectedTeamId={selectedTeamId}
               onSelectTeam={setSelectedTeamId}
               selectedDateStr={selectedDateStr}
-              onSelectDate={setSelectedDateStr}
+              onSelectDate={handleSelectDate}
               teams={allTeams}
               calendarDates={effectiveCalendarDates}
               totalMatchesCount={filteredMatches.length}
