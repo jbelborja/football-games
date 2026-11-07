@@ -28,6 +28,10 @@ export const App: React.FC = () => {
   const [teamResultFilter, setTeamResultFilter] = useState<TeamResultFilter>(null);
   const [selectedJornadaNumber, setSelectedJornadaNumber] = useState<number | null>(currentJornada.number);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  // All 38 matches for the currently selected team (populated by fetchMatchesForTeam).
+  // Using a dedicated state prevents showing only the 1-3 matches from the initial load
+  // while the full-season fetch is still in flight.
+  const [teamSpecificMatches, setTeamSpecificMatches] = useState<Match[] | null>(null);
 
   // Modals
   const [modalMatch, setModalMatch] = useState<Match | null>(null);
@@ -138,31 +142,56 @@ export const App: React.FC = () => {
 
   // Filtered matches
   const filteredMatches = useMemo(() => {
-    return matches.filter(m => {
+    // When a team is selected and their full season has been fetched, use those 38 matches
+    // directly instead of filtering from the global (initially small) matches state.
+    // This fixes the "only just played and next games" issue where only 1-3 initial matches
+    // appeared for the team before the full-season fetch completed.
+    const baseMatches = selectedTeamId && teamSpecificMatches ? teamSpecificMatches : matches;
+
+    return baseMatches.filter(m => {
       if (!m || !m.homeTeam || !m.awayTeam) return false;
 
-      // 1. Team filter
-      if (selectedTeamId) {
+      // 1. Team filter — only needed when using the global matches base
+      if (selectedTeamId && !teamSpecificMatches) {
         const homeId = m.homeTeam.team?.id || m.homeTeam.id;
         const awayId = m.awayTeam.team?.id || m.awayTeam.id;
-        const matchesTeam = homeId === selectedTeamId || awayId === selectedTeamId;
-        if (!matchesTeam) return false;
+        if (homeId !== selectedTeamId && awayId !== selectedTeamId) return false;
+      }
 
-        // 1.1 Result filter (only wins / draws / losses for this team)
-        if (teamResultFilter) {
-          const outcome = getMatchResultForTeam(m, selectedTeamId);
-          if (outcome !== teamResultFilter) return false;
-        }
+      // 1.1 Result filter (wins / draws / losses for the selected team)
+      if (selectedTeamId && teamResultFilter) {
+        const outcome = getMatchResultForTeam(m, selectedTeamId);
+        if (outcome !== teamResultFilter) return false;
       }
 
       // 2. Jornada filter
       if (selectedJornada) {
+        // For single-day jornadas (J15-J38, all on a Sunday or Wednesday) ESPN may spread
+        // the 10 games across Fri-Mon or Tue-Thu. We expand the window by ±2 days so
+        // matches aren't missed just because the jornada entry only lists the main day.
+        let jornadaDates: string[];
+        if (selectedJornada.dates.length === 1) {
+          const d0 = selectedJornada.dates[0];
+          const y = parseInt(d0.substring(0, 4));
+          const mo = parseInt(d0.substring(4, 6)) - 1;
+          const dy = parseInt(d0.substring(6, 8));
+          jornadaDates = [];
+          for (let off = -2; off <= 2; off++) {
+            const dt = new Date(Date.UTC(y, mo, dy + off));
+            jornadaDates.push(
+              `${dt.getUTCFullYear()}${String(dt.getUTCMonth() + 1).padStart(2, '0')}${String(dt.getUTCDate()).padStart(2, '0')}`
+            );
+          }
+        } else {
+          jornadaDates = selectedJornada.dates;
+        }
+
         if (m.jornadaNumber) {
           if (m.jornadaNumber !== selectedJornada.number) return false;
         } else {
           const d = new Date(m.date);
           const yyyymmdd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-          if (!selectedJornada.dates.includes(yyyymmdd)) return false;
+          if (!jornadaDates.includes(yyyymmdd)) return false;
         }
       }
 
@@ -176,7 +205,7 @@ export const App: React.FC = () => {
 
       return true;
     });
-  }, [matches, selectedTeamId, teamResultFilter, selectedJornada, searchQuery, getMatchResultForTeam]);
+  }, [matches, teamSpecificMatches, selectedTeamId, teamResultFilter, selectedJornada, searchQuery, getMatchResultForTeam]);
 
   // Counts for tabs
   const recentCount = useMemo(() => {
@@ -187,14 +216,18 @@ export const App: React.FC = () => {
     return filteredMatches.filter(m => m.status?.state === 'pre').length;
   }, [filteredMatches]);
 
-  // Counts of results for the selected team
+  // Counts of results for the selected team (wins / draws / losses for the filter buttons)
   const teamMatchCounts = useMemo(() => {
     if (!selectedTeamId) return undefined;
-    const forTeam = matches.filter(m => {
-      const homeId = m.homeTeam?.team?.id || m.homeTeam?.id;
-      const awayId = m.awayTeam?.team?.id || m.awayTeam?.id;
-      return homeId === selectedTeamId || awayId === selectedTeamId;
-    });
+    // Prefer the full-season team data; fall back to the global matches if the fetch is in progress
+    const source = teamSpecificMatches || matches;
+    const forTeam = teamSpecificMatches
+      ? source  // teamSpecificMatches are already team-specific
+      : source.filter(m => {
+          const homeId = m.homeTeam?.team?.id || m.homeTeam?.id;
+          const awayId = m.awayTeam?.team?.id || m.awayTeam?.id;
+          return homeId === selectedTeamId || awayId === selectedTeamId;
+        });
     let wins = 0;
     let draws = 0;
     let losses = 0;
@@ -210,25 +243,47 @@ export const App: React.FC = () => {
       draws,
       losses
     };
-  }, [matches, selectedTeamId, getMatchResultForTeam]);
+  }, [matches, teamSpecificMatches, selectedTeamId, getMatchResultForTeam]);
 
-  // Handle Jornada selection and fetch missing matches
+  // Handle Jornada selection and fetch missing matches.
+  // NOTE: We deliberately do NOT clear selectedTeamId here so that team + jornada filters
+  // remain composable: the user can pick an equipo and then narrow to a specific jornada.
   const handleSelectJornada = useCallback(async (jornadaNumber: number | null) => {
     setSelectedJornadaNumber(jornadaNumber);
+    setMatchSubTab('all');
+
     if (jornadaNumber === null) return;
 
     const targetJ = getJornadaByNumber(jornadaNumber);
     if (!targetJ) return;
 
-    // Check if we already have matches loaded for this Jornada
-    const hasMatchesForJornada = matches.some(m => {
+    // Expand single-day jornadas to a ±2-day window (matches can be Fri–Mon or Tue–Thu)
+    let jornadaCheckDates = targetJ.dates;
+    if (targetJ.dates.length === 1) {
+      const d0 = targetJ.dates[0];
+      const y = parseInt(d0.substring(0, 4));
+      const mo = parseInt(d0.substring(4, 6)) - 1;
+      const dy = parseInt(d0.substring(6, 8));
+      jornadaCheckDates = [];
+      for (let off = -2; off <= 2; off++) {
+        const dt = new Date(Date.UTC(y, mo, dy + off));
+        jornadaCheckDates.push(
+          `${dt.getUTCFullYear()}${String(dt.getUTCMonth() + 1).padStart(2, '0')}${String(dt.getUTCDate()).padStart(2, '0')}`
+        );
+      }
+    }
+
+    // Check if we already have a full batch of matches (at least 8) loaded for this Jornada
+    const matchesInJornada = matches.filter(m => {
       if (m.jornadaNumber === targetJ.number) return true;
       const d = new Date(m.date);
       const yyyymmdd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-      return targetJ.dates.includes(yyyymmdd);
+      return jornadaCheckDates.includes(yyyymmdd);
     });
 
-    if (!hasMatchesForJornada) {
+    const hasFullMatchesForJornada = matchesInJornada.length >= 8;
+
+    if (!hasFullMatchesForJornada) {
       try {
         setIsLoading(true);
         const newMatches = await fetchMatchesForJornada(targetJ);
@@ -253,26 +308,36 @@ export const App: React.FC = () => {
     setSelectedTeamId(teamId);
     setTeamResultFilter(resultFilter);
 
-    if (teamId) {
-      // When a team is selected, show all games for this team (not just current jornada)
-      setSelectedJornadaNumber(null);
+    if (!teamId) {
+      // Deselecting team — clear the team-specific cache
+      setTeamSpecificMatches(null);
+      return;
+    }
 
-      try {
-        setIsLoading(true);
-        const teamMatches = await fetchMatchesForTeam(teamId);
-        if (teamMatches.length > 0) {
-          setMatches(prev => {
-            const map = new Map<string, Match>();
-            prev.forEach(m => map.set(m.id, m));
-            teamMatches.forEach(m => map.set(m.id, m));
-            return Array.from(map.values()).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-          });
-        }
-      } catch (e) {
-        console.warn(`Could not load all matches for team ${teamId}:`, e);
-      } finally {
-        setIsLoading(false);
+    // When a team is selected, show all games for this team (not just current jornada)
+    setSelectedJornadaNumber(null);
+    setTeamSpecificMatches(null); // clear previous team's data while loading
+    // Default to 'all' subtab so all 38 matches (past results + upcoming fixtures) are shown
+    setMatchSubTab('all');
+
+    try {
+      setIsLoading(true);
+      const teamMatches = await fetchMatchesForTeam(teamId);
+      if (teamMatches.length > 0) {
+        // Store in the dedicated team state so filteredMatches uses all 38 immediately
+        setTeamSpecificMatches(teamMatches);
+        // Also merge into global matches so jornada view has the data for other features
+        setMatches(prev => {
+          const map = new Map<string, Match>();
+          prev.forEach(m => map.set(m.id, m));
+          teamMatches.forEach(m => map.set(m.id, m));
+          return Array.from(map.values()).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        });
       }
+    } catch (e) {
+      console.warn(`Could not load all matches for team ${teamId}:`, e);
+    } finally {
+      setIsLoading(false);
     }
   }, []);
 
@@ -346,6 +411,8 @@ export const App: React.FC = () => {
               selectedTeamName={selectedTeamId ? allTeams.find(t => t.id === selectedTeamId)?.displayName : undefined}
               teamResultFilter={teamResultFilter}
               onClearTeamResultFilter={() => setTeamResultFilter(null)}
+              onClearJornadaFilter={() => setSelectedJornadaNumber(null)}
+              onClearTeamFilter={() => { setSelectedTeamId(null); setTeamResultFilter(null); setTeamSpecificMatches(null); }}
               onOpenDetails={handleOpenDetails}
               onOpenHighlights={handleOpenHighlights}
             />

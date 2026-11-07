@@ -337,8 +337,25 @@ export async function fetchMatchesForJornada(jornada: Jornada): Promise<Match[]>
   const cacheKey = `laliga_jornada_${jornada.number}`;
 
   try {
+    // For single-day jornadas (J15–J38) the 10 games can be spread across Fri–Mon or Tue–Thu.
+    // We expand to ±2 days around the main date so no match is missed.
+    let fetchDates = jornada.dates;
+    if (jornada.dates.length === 1) {
+      const d0 = jornada.dates[0];
+      const y = parseInt(d0.substring(0, 4));
+      const mo = parseInt(d0.substring(4, 6)) - 1;
+      const dy = parseInt(d0.substring(6, 8));
+      fetchDates = [];
+      for (let off = -2; off <= 2; off++) {
+        const dt = new Date(Date.UTC(y, mo, dy + off));
+        fetchDates.push(
+          `${dt.getUTCFullYear()}${String(dt.getUTCMonth() + 1).padStart(2, '0')}${String(dt.getUTCDate()).padStart(2, '0')}`
+        );
+      }
+    }
+
     const dateResults = await Promise.allSettled(
-      jornada.dates.map(d => fetchWithFallback(`/apis/site/v2/sports/soccer/esp.1/scoreboard?dates=${d}`))
+      fetchDates.map(d => fetchWithFallback(`/apis/site/v2/sports/soccer/esp.1/scoreboard?dates=${d}`))
     );
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -360,6 +377,11 @@ export async function fetchMatchesForJornada(jornada: Jornada): Promise<Match[]>
     const matches: Match[] = allEvents
       .map(ev => parseEvent(ev))
       .filter((m: Match | null): m is Match => m !== null);
+
+    // Explicitly guarantee every match in this batch has the correct jornadaNumber
+    matches.forEach(m => {
+      m.jornadaNumber = jornada.number;
+    });
 
     matches.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
@@ -389,16 +411,40 @@ export async function fetchMatchesForJornada(jornada: Jornada): Promise<Match[]>
 }
 
 /**
- * Descarga todos los partidos de la temporada para un equipo concreto.
+ * Descarga todos los partidos de la temporada para un equipo concreto (jugados y futuros fixtures).
  */
 export async function fetchMatchesForTeam(teamId: string): Promise<Match[]> {
   const cacheKey = `laliga_team_matches_${teamId}`;
 
   try {
-    const data = await fetchWithFallback(`/apis/site/v2/sports/soccer/esp.1/teams/${teamId}/schedule`);
-    const rawEvents: any[] = data.events || [];
+    // ESPN divide el calendario de un club en partidos jugados y fixtures futuros (?fixture=true).
+    // Descargamos ambos en paralelo para abarcar las 38 jornadas completas del club.
+    const [pastResult, futureResult] = await Promise.allSettled([
+      fetchWithFallback(`/apis/site/v2/sports/soccer/esp.1/teams/${teamId}/schedule`),
+      fetchWithFallback(`/apis/site/v2/sports/soccer/esp.1/teams/${teamId}/schedule?fixture=true`)
+    ]);
 
-    const matches: Match[] = rawEvents
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allRawEvents: any[] = [];
+    if (pastResult.status === 'fulfilled' && Array.isArray(pastResult.value?.events)) {
+      allRawEvents.push(...pastResult.value.events);
+    }
+    if (futureResult.status === 'fulfilled' && Array.isArray(futureResult.value?.events)) {
+      allRawEvents.push(...futureResult.value.events);
+    }
+
+    // Deduplicar eventos por ID
+    const seenEventIds = new Set<string>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const uniqueEvents: any[] = [];
+    allRawEvents.forEach(ev => {
+      if (ev && ev.id && !seenEventIds.has(ev.id)) {
+        seenEventIds.add(ev.id);
+        uniqueEvents.push(ev);
+      }
+    });
+
+    const matches: Match[] = uniqueEvents
       .map(ev => parseEvent(ev))
       .filter((m: Match | null): m is Match => m !== null);
 

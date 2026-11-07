@@ -10,6 +10,8 @@ interface MainViewProps {
   selectedTeamName?: string;
   teamResultFilter?: TeamResultFilter;
   onClearTeamResultFilter?: () => void;
+  onClearJornadaFilter?: () => void;
+  onClearTeamFilter?: () => void;
   onOpenDetails: (match: Match) => void;
   onOpenHighlights: (match: Match) => void;
 }
@@ -21,16 +23,28 @@ export const MainView: React.FC<MainViewProps> = ({
   selectedTeamName,
   teamResultFilter,
   onClearTeamResultFilter,
+  onClearJornadaFilter,
+  onClearTeamFilter,
   onOpenDetails,
   onOpenHighlights
 }) => {
-  const liveMatches = matches.filter(m => m.status.state === 'in');
+  const liveMatches = matches.filter(m => m.status?.state === 'in');
   const finishedMatches = matches
-    .filter(m => m.status.completed || m.status.state === 'post')
+    .filter(m => m.status?.completed || m.status?.state === 'post')
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   const upcomingMatches = matches
-    .filter(m => m.status.state === 'pre')
+    .filter(m => m.status?.state === 'pre')
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  // Prevent blank screen if user was on 'recent' but all jornada matches are upcoming,
+  // or was on 'upcoming' but all matches are already finished
+  const hasLive = liveMatches.length > 0;
+  const hasFinished = finishedMatches.length > 0;
+  const hasUpcoming = upcomingMatches.length > 0;
+
+  const showLive = hasLive && (matchSubTab === 'all' || matchSubTab === 'recent');
+  const showFinished = hasFinished && (matchSubTab === 'all' || matchSubTab === 'recent' || (!hasUpcoming && !hasLive));
+  const showUpcoming = hasUpcoming && (matchSubTab === 'all' || matchSubTab === 'upcoming' || (!hasFinished && !hasLive));
 
   if (matches.length === 0) {
     return (
@@ -39,27 +53,66 @@ export const MainView: React.FC<MainViewProps> = ({
         <h3 className="text-base font-semibold text-slate-200">No se encontraron partidos</h3>
         <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
           {teamResultFilter && selectedTeamName
-            ? `No hay partidos con resultado de ${teamResultFilter === 'win' ? 'victoria' : teamResultFilter === 'draw' ? 'empate' : 'derrota'} para ${selectedTeamName} con los filtros actuales.`
+            ? `No hay partidos con resultado de ${teamResultFilter === 'win' ? 'victoria' : teamResultFilter === 'draw' ? 'empate' : 'derrota'} para ${selectedTeamName}${selectedJornada ? ` en la ${selectedJornada.label}` : ''}.`
+            : selectedTeamName && selectedJornada
+            ? `No hay partidos de ${selectedTeamName} en la ${selectedJornada.label}. El equipo puede no jugar en esa jornada o los datos aún no están disponibles.`
             : selectedJornada
-            ? `No hay partidos que coincidan con los filtros en la ${selectedJornada.label}. Prueba a seleccionar otra jornada o todos los equipos.`
+            ? `No hay partidos cargados para la ${selectedJornada.label}. Comprueba la conexión o selecciona otra jornada.`
             : 'Prueba a cambiar o limpiar los filtros de equipo y jornada.'}
         </p>
-        {teamResultFilter && onClearTeamResultFilter && (
-          <button
-            onClick={onClearTeamResultFilter}
-            className="mt-3 text-xs text-indigo-400 hover:text-indigo-300 underline font-medium"
-          >
-            Ver todos los partidos de {selectedTeamName || 'este equipo'}
-          </button>
-        )}
+        <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+          {teamResultFilter && onClearTeamResultFilter && (
+            <button
+              onClick={onClearTeamResultFilter}
+              className="text-xs px-3 py-1.5 rounded-lg bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 font-medium border border-indigo-500/30 transition-colors"
+            >
+              Ver todos los partidos de {selectedTeamName || 'este equipo'}
+            </button>
+          )}
+          {selectedJornada && onClearJornadaFilter && (
+            <button
+              onClick={onClearJornadaFilter}
+              className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 font-medium border border-slate-700 transition-colors"
+            >
+              {selectedTeamName ? `Ver todos los partidos de ${selectedTeamName}` : 'Ver todas las jornadas'}
+            </button>
+          )}
+          {selectedTeamName && onClearTeamFilter && (
+            <button
+              onClick={onClearTeamFilter}
+              className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 font-medium border border-slate-700 transition-colors"
+            >
+              {selectedJornada ? `Ver todos los partidos de ${selectedJornada.label}` : 'Ver todos los equipos'}
+            </button>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Selected Jornada contextual banner */}
-      {selectedJornada && (
+      {/* Context banner: shows active filter combination */}
+      {selectedJornada && selectedTeamName ? (
+        // Team + Jornada combined filter
+        <div className="flex items-center justify-between px-3.5 py-2 bg-slate-900/60 rounded-xl border border-slate-800/80 text-xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-white">{selectedTeamName}</span>
+            <span className="text-slate-400">•</span>
+            <span className="font-semibold text-slate-200">{selectedJornada.label}</span>
+            <span className="text-slate-400">({selectedJornada.dateRange})</span>
+            {selectedJornada.isCurrent && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30">
+                Jornada Actual
+              </span>
+            )}
+          </div>
+          <span className="text-slate-400 font-medium text-right shrink-0">
+            {matches.length} {matches.length === 1 ? 'partido' : 'partidos'}
+          </span>
+        </div>
+      ) : selectedJornada ? (
+        // Jornada only
         <div className="flex items-center justify-between px-3.5 py-2 bg-slate-900/60 rounded-xl border border-slate-800/80 text-xs">
           <div className="flex items-center gap-2">
             <span className="font-bold text-slate-100">{selectedJornada.label}</span>
@@ -74,7 +127,7 @@ export const MainView: React.FC<MainViewProps> = ({
             {matches.length} {matches.length === 1 ? 'partido' : 'partidos'}
           </span>
         </div>
-      )}
+      ) : null}
 
       {/* Selected Team Result filter banner */}
       {teamResultFilter && selectedTeamName && (
@@ -96,7 +149,7 @@ export const MainView: React.FC<MainViewProps> = ({
         </div>
       )}
       {/* 1. LIVE MATCHES (always top priority if any) */}
-      {liveMatches.length > 0 && (matchSubTab === 'all' || matchSubTab === 'recent') && (
+      {showLive && (
         <section className="space-y-3">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
@@ -123,7 +176,7 @@ export const MainView: React.FC<MainViewProps> = ({
       )}
 
       {/* 2. JUST PLAYED / RECENT RESULTS */}
-      {(matchSubTab === 'all' || matchSubTab === 'recent') && finishedMatches.length > 0 && (
+      {showFinished && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -135,7 +188,7 @@ export const MainView: React.FC<MainViewProps> = ({
                 {finishedMatches.length}
               </span>
             </div>
-            <span className="text-[11px] text-slate-500">Últimos resultados y resúmenes</span>
+            <span className="text-[11px] text-slate-500">Resultados y resúmenes</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -152,7 +205,7 @@ export const MainView: React.FC<MainViewProps> = ({
       )}
 
       {/* 3. UPCOMING MATCHES */}
-      {(matchSubTab === 'all' || matchSubTab === 'upcoming') && upcomingMatches.length > 0 && (
+      {showUpcoming && (
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
