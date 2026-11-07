@@ -88,9 +88,13 @@ export const MatchModal: React.FC<MatchModalProps> = ({
                   </div>
                 ) : (
                   <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-950 border border-slate-700 shadow-inner">
-                    <span className="text-2xl sm:text-3xl font-black text-white">{match.homeTeam.score}</span>
+                    <span className="text-2xl sm:text-3xl font-black text-white">
+                      {typeof match.homeTeam.score === 'object' ? String((match.homeTeam.score as any)?.displayValue ?? (match.homeTeam.score as any)?.value ?? '0') : String(match.homeTeam.score ?? '0')}
+                    </span>
                     <span className="text-slate-500 font-bold">:</span>
-                    <span className="text-2xl sm:text-3xl font-black text-white">{match.awayTeam.score}</span>
+                    <span className="text-2xl sm:text-3xl font-black text-white">
+                      {typeof match.awayTeam.score === 'object' ? String((match.awayTeam.score as any)?.displayValue ?? (match.awayTeam.score as any)?.value ?? '0') : String(match.awayTeam.score ?? '0')}
+                    </span>
                   </div>
                 )}
                 <span className="text-[11px] font-semibold text-rose-400 mt-2 text-center">

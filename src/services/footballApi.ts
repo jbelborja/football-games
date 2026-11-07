@@ -1,4 +1,5 @@
-import { Match, StandingsTeamEntry, JornadaDate, MatchDetailEvent, HighlightVideo } from '../types/football';
+import { Match, StandingsTeamEntry, JornadaDate, MatchDetailEvent, HighlightVideo, Jornada, FormMatch } from '../types/football';
+import { getJornadaForDate, getCurrentJornada, getJornadaByNumber, toYYYYMMDD, LALIGA_JORNADAS } from './jornadas';
 
 const BASE_URL = 'https://site.api.espn.com';
 const PROXY_URL = '/api/espn';
@@ -25,6 +26,23 @@ async function fetchWithFallback(endpoint: string) {
   throw new Error(`Failed to fetch ${endpoint}`);
 }
 
+// Robust score string parser (ESPN returns string in scoreboards and object in team schedules)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function parseScore(rawScore: any): string {
+  if (rawScore === null || rawScore === undefined) return '0';
+  if (typeof rawScore === 'string') return rawScore;
+  if (typeof rawScore === 'number') return String(rawScore);
+  if (typeof rawScore === 'object') {
+    if (rawScore.displayValue !== undefined && rawScore.displayValue !== null) {
+      return String(rawScore.displayValue);
+    }
+    if (rawScore.value !== undefined && rawScore.value !== null) {
+      return String(rawScore.value);
+    }
+  }
+  return '0';
+}
+
 // Parse an ESPN event into our Match model
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function parseEvent(ev: any): Match | null {
@@ -37,24 +55,27 @@ function parseEvent(ev: any): Match | null {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const awayComp = comp.competitors.find((c: any) => c.homeAway === 'away') || comp.competitors[1];
 
+    const homeLogo = homeComp.team?.logo || homeComp.team?.logos?.[0]?.href || 'https://a.espncdn.com/i/teamlogos/soccer/500/default-team-logo.png';
+    const awayLogo = awayComp.team?.logo || awayComp.team?.logos?.[0]?.href || 'https://a.espncdn.com/i/teamlogos/soccer/500/default-team-logo.png';
+
     const homeTeam = {
-      id: homeComp.team?.id || '',
+      id: homeComp.team?.id || homeComp.id || '',
       name: homeComp.team?.name || 'Local',
       displayName: homeComp.team?.displayName || 'Local',
       shortDisplayName: homeComp.team?.shortDisplayName || homeComp.team?.name || 'Local',
       abbreviation: homeComp.team?.abbreviation || 'LOC',
-      logo: homeComp.team?.logo || 'https://a.espncdn.com/i/teamlogos/soccer/500/default-team-logo.png',
+      logo: homeLogo,
       color: homeComp.team?.color,
       alternateColor: homeComp.team?.alternateColor
     };
 
     const awayTeam = {
-      id: awayComp.team?.id || '',
+      id: awayComp.team?.id || awayComp.id || '',
       name: awayComp.team?.name || 'Visitante',
       displayName: awayComp.team?.displayName || 'Visitante',
       shortDisplayName: awayComp.team?.shortDisplayName || awayComp.team?.name || 'Visitante',
       abbreviation: awayComp.team?.abbreviation || 'VIS',
-      logo: awayComp.team?.logo || 'https://a.espncdn.com/i/teamlogos/soccer/500/default-team-logo.png',
+      logo: awayLogo,
       color: awayComp.team?.color,
       alternateColor: awayComp.team?.alternateColor
     };
@@ -147,8 +168,8 @@ function parseEvent(ev: any): Match | null {
       homeTeam: {
         id: homeComp.id,
         homeAway: 'home',
-        score: homeComp.score ?? '0',
-        winner: homeComp.winner,
+        score: parseScore(homeComp.score),
+        winner: Boolean(homeComp.winner),
         team: homeTeam,
         form: homeComp.form,
         records: homeComp.records
@@ -156,8 +177,8 @@ function parseEvent(ev: any): Match | null {
       awayTeam: {
         id: awayComp.id,
         homeAway: 'away',
-        score: awayComp.score ?? '0',
-        winner: awayComp.winner,
+        score: parseScore(awayComp.score),
+        winner: Boolean(awayComp.winner),
         team: awayTeam,
         form: awayComp.form,
         records: awayComp.records
@@ -166,20 +187,13 @@ function parseEvent(ev: any): Match | null {
       highlights,
       recapDescription: headlineItem?.description,
       youtubeHighlightUrl,
-      espnMatchUrl: espnMatchLink
+      espnMatchUrl: espnMatchLink,
+      jornadaNumber: getJornadaForDate(ev.date)?.number
     };
   } catch (err) {
     console.error('Error parsing match event:', err);
     return null;
   }
-}
-
-// Format date to YYYYMMDD
-function toYYYYMMDD(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}${m}${day}`;
 }
 
 export interface MatchesResponse {
@@ -236,19 +250,16 @@ export async function fetchMatches(specificDate?: string): Promise<MatchesRespon
 
       calendar.push(...calendarDatesSet.map(({ dateStr, label }) => ({ dateStr, label })));
 
-      // Find nearby match dates: 3 previous matchdays and 3 upcoming matchdays
-      const todayYYYYMMDD = toYYYYMMDD(new Date());
-      const pastDates = calendarDatesSet
-        .filter(c => c.dateStr < todayYYYYMMDD)
-        .slice(-3)
-        .map(c => c.dateStr);
+      // Load dates for the current jornada + adjacent jornadas (prev & next)
+      const currentJornada = getCurrentJornada();
+      const prevJornada = currentJornada.number > 1 ? getJornadaByNumber(currentJornada.number - 1) : null;
+      const nextJornada = currentJornada.number < 38 ? getJornadaByNumber(currentJornada.number + 1) : null;
 
-      const upcomingDates = calendarDatesSet
-        .filter(c => c.dateStr >= todayYYYYMMDD)
-        .slice(0, 3)
-        .map(c => c.dateStr);
-
-      const targetDates = Array.from(new Set([...pastDates, ...upcomingDates]));
+      const targetDates = Array.from(new Set([
+        ...(prevJornada ? prevJornada.dates : []),
+        ...currentJornada.dates,
+        ...(nextJornada ? nextJornada.dates : [])
+      ]));
 
       // Fetch nearby dates in parallel using reliable single-date endpoints
       if (targetDates.length > 0) {
@@ -319,11 +330,207 @@ export async function fetchMatches(specificDate?: string): Promise<MatchesRespon
   }
 }
 
+/**
+ * Descarga todos los partidos correspondientes a una Jornada completa.
+ */
+export async function fetchMatchesForJornada(jornada: Jornada): Promise<Match[]> {
+  const cacheKey = `laliga_jornada_${jornada.number}`;
+
+  try {
+    const dateResults = await Promise.allSettled(
+      jornada.dates.map(d => fetchWithFallback(`/apis/site/v2/sports/soccer/esp.1/scoreboard?dates=${d}`))
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allEvents: any[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const seenIds = new Set<string>();
+
+    dateResults.forEach(res => {
+      if (res.status === 'fulfilled' && Array.isArray(res.value?.events)) {
+        res.value.events.forEach((ev: any) => {
+          if (ev && ev.id && !seenIds.has(ev.id)) {
+            seenIds.add(ev.id);
+            allEvents.push(ev);
+          }
+        });
+      }
+    });
+
+    const matches: Match[] = allEvents
+      .map(ev => parseEvent(ev))
+      .filter((m: Match | null): m is Match => m !== null);
+
+    matches.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify({
+        matches,
+        lastUpdated: new Date().toISOString()
+      }));
+    } catch {
+      // ignore
+    }
+
+    return matches;
+  } catch (error) {
+    console.warn(`Failed to fetch matches for Jornada ${jornada.number}, checking cache...`, error);
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        return parsed.matches || [];
+      } catch {
+        // ignore
+      }
+    }
+    throw error;
+  }
+}
+
+/**
+ * Descarga todos los partidos de la temporada para un equipo concreto.
+ */
+export async function fetchMatchesForTeam(teamId: string): Promise<Match[]> {
+  const cacheKey = `laliga_team_matches_${teamId}`;
+
+  try {
+    const data = await fetchWithFallback(`/apis/site/v2/sports/soccer/esp.1/teams/${teamId}/schedule`);
+    const rawEvents: any[] = data.events || [];
+
+    const matches: Match[] = rawEvents
+      .map(ev => parseEvent(ev))
+      .filter((m: Match | null): m is Match => m !== null);
+
+    matches.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify({
+        matches,
+        lastUpdated: new Date().toISOString()
+      }));
+    } catch {
+      // ignore
+    }
+
+    return matches;
+  } catch (error) {
+    console.warn(`Failed to fetch matches for team ${teamId}, checking cache...`, error);
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        const cachedMatches: Match[] = (parsed.matches || []).map((m: any) => ({
+          ...m,
+          homeTeam: {
+            ...m.homeTeam,
+            score: parseScore(m.homeTeam?.score)
+          },
+          awayTeam: {
+            ...m.awayTeam,
+            score: parseScore(m.awayTeam?.score)
+          }
+        }));
+        return cachedMatches;
+      } catch {
+        // ignore
+      }
+    }
+    return [];
+  }
+}
+
+/**
+ * Calcula la racha y los últimos 5 partidos de cada equipo a partir de los resultados reales.
+ */
+async function calculateTeamForms(): Promise<Map<string, FormMatch[]>> {
+  const todayYYYYMMDD = toYYYYMMDD(new Date());
+  // Fechas pasadas de la temporada hasta el día actual
+  const pastDates = LALIGA_JORNADAS
+    .flatMap(j => j.dates)
+    .filter(d => d <= todayYYYYMMDD);
+
+  // Seleccionar hasta las últimas 25 fechas (cubre al menos 6-7 jornadas de juego)
+  const recentDates = pastDates.slice(-25);
+
+  const teamMatches = new Map<string, FormMatch[]>();
+  const seenEventIds = new Set<string>();
+
+  try {
+    const results = await Promise.allSettled(
+      recentDates.map(d => fetchWithFallback(`/apis/site/v2/sports/soccer/esp.1/scoreboard?dates=${d}`))
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allEvents: any[] = [];
+    results.forEach(res => {
+      if (res.status === 'fulfilled' && Array.isArray(res.value?.events)) {
+        allEvents.push(...res.value.events);
+      }
+    });
+
+    // Ordenar cronológicamente (más antiguo a más reciente)
+    allEvents.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    allEvents.forEach(ev => {
+      if (!ev || !ev.id || seenEventIds.has(ev.id)) return;
+      seenEventIds.add(ev.id);
+
+      const comp = ev.competitions?.[0];
+      const isCompleted = Boolean(comp?.status?.type?.completed) || comp?.status?.type?.state === 'post';
+      if (!isCompleted) return;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const home = comp.competitors?.find((c: any) => c.homeAway === 'home');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const away = comp.competitors?.find((c: any) => c.homeAway === 'away');
+      if (!home?.team?.id || !away?.team?.id) return;
+
+      const homeScore = Number(parseScore(home.score));
+      const awayScore = Number(parseScore(away.score));
+
+      // 'G' = Ganado, 'E' = Empatado, 'L' = Perdido (Lost)
+      const homeResult: 'G' | 'E' | 'L' = homeScore > awayScore ? 'G' : homeScore < awayScore ? 'L' : 'E';
+      const awayResult: 'G' | 'E' | 'L' = awayScore > homeScore ? 'G' : awayScore < homeScore ? 'L' : 'E';
+
+      if (!teamMatches.has(home.team.id)) teamMatches.set(home.team.id, []);
+      teamMatches.get(home.team.id)!.push({
+        result: homeResult,
+        score: `${homeScore}-${awayScore}`,
+        opponent: away.team.shortDisplayName || away.team.displayName || away.team.name,
+        date: ev.date
+      });
+
+      if (!teamMatches.has(away.team.id)) teamMatches.set(away.team.id, []);
+      teamMatches.get(away.team.id)!.push({
+        result: awayResult,
+        score: `${awayScore}-${homeScore}`,
+        opponent: home.team.shortDisplayName || home.team.displayName || home.team.name,
+        date: ev.date
+      });
+    });
+  } catch (err) {
+    console.warn('Could not calculate team forms from scoreboard:', err);
+  }
+
+  // Conservar solo los últimos 5 partidos jugados por cada equipo
+  const finalMap = new Map<string, FormMatch[]>();
+  teamMatches.forEach((matchesList, teamId) => {
+    finalMap.set(teamId, matchesList.slice(-5));
+  });
+
+  return finalMap;
+}
+
 export async function fetchStandings(): Promise<{ standings: StandingsTeamEntry[]; lastUpdated: Date; fromCache?: boolean }> {
   const cacheKey = 'laliga_standings';
 
   try {
-    const data = await fetchWithFallback('/apis/v2/sports/soccer/esp.1/standings');
+    const [data, teamForms] = await Promise.all([
+      fetchWithFallback('/apis/v2/sports/soccer/esp.1/standings'),
+      calculateTeamForms().catch(() => new Map<string, FormMatch[]>())
+    ]);
+
     const entries = data.children?.[0]?.standings?.entries || [];
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -331,14 +538,18 @@ export async function fetchStandings(): Promise<{ standings: StandingsTeamEntry[
       const stats = entry.stats || [];
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const getStat = (name: string) => stats.find((s: any) => s.name === name)?.value ?? 0;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const getStatDisplay = (name: string) => stats.find((s: any) => s.name === name)?.displayValue ?? '';
+
+      const teamId = entry.team?.id || '';
+      const formMatches = teamForms.get(teamId) || [];
+      const formString = formMatches.length > 0
+        ? formMatches.map(m => m.result).join(' ')
+        : '';
 
       return {
         rank: Number(getStat('rank')),
         rankChange: Number(getStat('rankChange')),
         team: {
-          id: entry.team?.id || '',
+          id: teamId,
           name: entry.team?.name || '',
           displayName: entry.team?.displayName || '',
           shortDisplayName: entry.team?.shortDisplayName || entry.team?.name || '',
@@ -353,7 +564,8 @@ export async function fetchStandings(): Promise<{ standings: StandingsTeamEntry[
         goalsAgainst: Number(getStat('pointsAgainst')),
         goalDiff: Number(getStat('pointDifferential')),
         points: Number(getStat('points')),
-        form: getStatDisplay('overall'),
+        form: formString,
+        formMatches: formMatches.length > 0 ? formMatches : undefined,
         noteColor: entry.note?.color,
         noteDescription: entry.note?.description
       };

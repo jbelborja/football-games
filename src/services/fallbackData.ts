@@ -272,48 +272,48 @@ export const FALLBACK_STANDINGS: StandingsTeamEntry[] = [
     rank: 1,
     rankChange: 0,
     team: { id: '83', name: 'Barcelona', displayName: 'Barcelona', shortDisplayName: 'Barcelona', abbreviation: 'BAR', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/83.png' },
-    played: 3, won: 3, drawn: 0, lost: 0, goalsFor: 12, goalsAgainst: 2, goalDiff: 10, points: 9, form: '3-0-0', noteColor: '#81D6AC', noteDescription: 'Champions League'
+    played: 11, won: 10, drawn: 0, lost: 1, goalsFor: 46, goalsAgainst: 12, goalDiff: 34, points: 30, form: 'G G G L G', noteColor: '#81D6AC', noteDescription: 'Champions League'
   },
   {
     rank: 2,
     rankChange: 0,
-    team: { id: '86', name: 'Real Madrid', displayName: 'Real Madrid', shortDisplayName: 'Real Madrid', abbreviation: 'RMA', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/86.png' },
-    played: 4, won: 3, drawn: 0, lost: 1, goalsFor: 10, goalsAgainst: 3, goalDiff: 7, points: 9, form: '3-0-1', noteColor: '#81D6AC', noteDescription: 'Champions League'
+    team: { id: '1068', name: 'Atlético Madrid', displayName: 'Atlético Madrid', shortDisplayName: 'Atlético', abbreviation: 'ATM', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/1068.png' },
+    played: 11, won: 9, drawn: 1, lost: 1, goalsFor: 28, goalsAgainst: 10, goalDiff: 18, points: 28, form: 'G G G G G', noteColor: '#81D6AC', noteDescription: 'Champions League'
   },
   {
     rank: 3,
     rankChange: 0,
-    team: { id: '244', name: 'Real Betis', displayName: 'Real Betis', shortDisplayName: 'Betis', abbreviation: 'BET', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/244.png' },
-    played: 4, won: 3, drawn: 0, lost: 1, goalsFor: 5, goalsAgainst: 5, goalDiff: 0, points: 9, form: '3-0-1', noteColor: '#81D6AC', noteDescription: 'Champions League'
+    team: { id: '86', name: 'Real Madrid', displayName: 'Real Madrid', shortDisplayName: 'Real Madrid', abbreviation: 'RMA', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/86.png' },
+    played: 11, won: 9, drawn: 0, lost: 2, goalsFor: 29, goalsAgainst: 11, goalDiff: 18, points: 27, form: 'L G G G G', noteColor: '#81D6AC', noteDescription: 'Champions League'
   },
   {
     rank: 4,
     rankChange: 0,
-    team: { id: '96', name: 'Alavés', displayName: 'Alavés', shortDisplayName: 'Alavés', abbreviation: 'ALA', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/96.png' },
-    played: 3, won: 2, drawn: 1, lost: 0, goalsFor: 5, goalsAgainst: 1, goalDiff: 4, points: 7, form: '2-1-0', noteColor: '#81D6AC', noteDescription: 'Champions League'
+    team: { id: '244', name: 'Real Betis', displayName: 'Real Betis', shortDisplayName: 'Betis', abbreviation: 'BET', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/244.png' },
+    played: 11, won: 6, drawn: 3, lost: 2, goalsFor: 18, goalsAgainst: 12, goalDiff: 6, points: 21, form: 'E G L E G', noteColor: '#81D6AC', noteDescription: 'Champions League'
   },
   {
     rank: 5,
     rankChange: 0,
-    team: { id: '1068', name: 'Atlético Madrid', displayName: 'Atlético Madrid', shortDisplayName: 'Atlético', abbreviation: 'ATM', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/1068.png' },
-    played: 4, won: 2, drawn: 1, lost: 1, goalsFor: 7, goalsAgainst: 6, goalDiff: 1, points: 7, form: '2-1-1', noteColor: '#c6d1e0', noteDescription: 'Europa League'
+    team: { id: '89', name: 'Real Sociedad', displayName: 'Real Sociedad', shortDisplayName: 'R. Sociedad', abbreviation: 'RSO', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/89.png' },
+    played: 11, won: 6, drawn: 2, lost: 3, goalsFor: 16, goalsAgainst: 11, goalDiff: 5, points: 20, form: 'G G G G L', noteColor: '#c6d1e0', noteDescription: 'Europa League'
   },
   {
     rank: 6,
     rankChange: 0,
     team: { id: '93', name: 'Athletic Club', displayName: 'Athletic Club', shortDisplayName: 'Athletic', abbreviation: 'ATH', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/93.png' },
-    played: 4, won: 2, drawn: 0, lost: 2, goalsFor: 6, goalsAgainst: 5, goalDiff: 1, points: 6, form: '2-0-2', noteColor: '#B2BFD0', noteDescription: 'Conference League'
+    played: 10, won: 5, drawn: 3, lost: 2, goalsFor: 17, goalsAgainst: 10, goalDiff: 7, points: 18, form: 'E E L G G', noteColor: '#B2BFD0', noteDescription: 'Conference League'
   },
   {
     rank: 7,
     rankChange: 0,
     team: { id: '243', name: 'Sevilla', displayName: 'Sevilla', shortDisplayName: 'Sevilla', abbreviation: 'SEV', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/243.png' },
-    played: 3, won: 2, drawn: 0, lost: 1, goalsFor: 6, goalsAgainst: 5, goalDiff: 1, points: 6, form: '2-0-1'
+    played: 12, won: 5, drawn: 3, lost: 4, goalsFor: 18, goalsAgainst: 16, goalDiff: 2, points: 18, form: 'E L G L E'
   },
   {
     rank: 8,
     rankChange: 0,
     team: { id: '102', name: 'Villarreal', displayName: 'Villarreal', shortDisplayName: 'Villarreal', abbreviation: 'VIL', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/102.png' },
-    played: 3, won: 0, drawn: 2, lost: 1, goalsFor: 4, goalsAgainst: 5, goalDiff: -1, points: 2, form: '0-2-1'
+    played: 11, won: 5, drawn: 2, lost: 4, goalsFor: 19, goalsAgainst: 17, goalDiff: 2, points: 17, form: 'G L E G L'
   }
 ];

@@ -5,23 +5,28 @@ import { MainView } from './components/MainView';
 import { StandingsTable } from './components/StandingsTable';
 import { MatchModal } from './components/MatchModal';
 import { InstallGuideModal } from './components/InstallGuideModal';
-import { fetchMatches, fetchStandings } from './services/footballApi';
+import { fetchMatches, fetchStandings, fetchMatchesForJornada, fetchMatchesForTeam } from './services/footballApi';
 import { FALLBACK_MATCHES, FALLBACK_STANDINGS } from './services/fallbackData';
-import { Match, StandingsTeamEntry, JornadaDate, Team } from './types/football';
+import { Match, StandingsTeamEntry, Team, TeamResultFilter } from './types/football';
+import { getAllJornadas, getCurrentJornada, getJornadaByNumber } from './services/jornadas';
 
 export const App: React.FC = () => {
   const [matches, setMatches] = useState<Match[]>([]);
   const [standings, setStandings] = useState<StandingsTeamEntry[]>([]);
-  const [calendarDates, setCalendarDates] = useState<JornadaDate[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isFromCache, setIsFromCache] = useState<boolean>(false);
+
+  // Jornadas definition
+  const currentJornada = useMemo(() => getCurrentJornada(), []);
+  const allJornadas = useMemo(() => getAllJornadas(), []);
 
   // Navigation & Filtering
   const [activeTab, setActiveTab] = useState<'matches' | 'standings'>('matches');
   const [matchSubTab, setMatchSubTab] = useState<'all' | 'recent' | 'upcoming'>('all');
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
-  const [selectedDateStr, setSelectedDateStr] = useState<string | null>(null);
+  const [teamResultFilter, setTeamResultFilter] = useState<TeamResultFilter>(null);
+  const [selectedJornadaNumber, setSelectedJornadaNumber] = useState<number | null>(currentJornada.number);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Modals
@@ -38,9 +43,6 @@ export const App: React.FC = () => {
     try {
       const matchRes = await fetchMatches();
       setMatches(matchRes.matches);
-      if (matchRes.calendar.length > 0) {
-        setCalendarDates(matchRes.calendar);
-      }
       setLastUpdated(matchRes.lastUpdated);
       if (matchRes.fromCache) loadedFromCache = true;
     } catch (err) {
@@ -97,93 +99,186 @@ export const App: React.FC = () => {
     return Array.from(teamMap.values()).sort((a, b) => a.displayName.localeCompare(b.displayName));
   }, [standings, matches]);
 
-  // If calendarDates was not provided by API, infer from available matches
-  const effectiveCalendarDates = useMemo<JornadaDate[]>(() => {
-    if (calendarDates.length > 0) return calendarDates;
-    const map = new Map<string, JornadaDate>();
-    matches.forEach(m => {
-      const d = new Date(m.date);
-      const yyyymmdd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-      if (!map.has(yyyymmdd)) {
-        map.set(yyyymmdd, {
-          dateStr: yyyymmdd,
-          label: d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })
-        });
+  // Selected Jornada object
+  const selectedJornada = useMemo(() => {
+    if (selectedJornadaNumber === null) return null;
+    return getJornadaByNumber(selectedJornadaNumber) || null;
+  }, [selectedJornadaNumber]);
+
+  // Helper to determine match outcome for a specific team
+  const getMatchResultForTeam = useCallback((m: Match, teamId: string): 'win' | 'draw' | 'loss' | null => {
+    const isCompleted = Boolean(m.status?.completed) || m.status?.state === 'post';
+    if (!isCompleted) return null;
+    const homeId = m.homeTeam?.team?.id || m.homeTeam?.id;
+    const awayId = m.awayTeam?.team?.id || m.awayTeam?.id;
+    const isHome = homeId === teamId;
+    const isAway = awayId === teamId;
+    if (!isHome && !isAway) return null;
+
+    const parseNum = (score: any): number => {
+      if (typeof score === 'number') return score;
+      if (typeof score === 'string') return parseFloat(score);
+      if (typeof score === 'object' && score !== null) {
+        if (score.value !== undefined) return Number(score.value);
+        if (score.displayValue !== undefined) return parseFloat(score.displayValue);
       }
-    });
-    return Array.from(map.values()).sort((a, b) => a.dateStr.localeCompare(b.dateStr));
-  }, [calendarDates, matches]);
+      return NaN;
+    };
+
+    const homeScore = parseNum(m.homeTeam?.score);
+    const awayScore = parseNum(m.awayTeam?.score);
+    if (isNaN(homeScore) || isNaN(awayScore)) return null;
+
+    if (isHome) {
+      return homeScore > awayScore ? 'win' : homeScore < awayScore ? 'loss' : 'draw';
+    } else {
+      return awayScore > homeScore ? 'win' : awayScore < homeScore ? 'loss' : 'draw';
+    }
+  }, []);
 
   // Filtered matches
   const filteredMatches = useMemo(() => {
     return matches.filter(m => {
+      if (!m || !m.homeTeam || !m.awayTeam) return false;
+
       // 1. Team filter
       if (selectedTeamId) {
-        const matchesTeam = m.homeTeam.team.id === selectedTeamId || m.awayTeam.team.id === selectedTeamId;
+        const homeId = m.homeTeam.team?.id || m.homeTeam.id;
+        const awayId = m.awayTeam.team?.id || m.awayTeam.id;
+        const matchesTeam = homeId === selectedTeamId || awayId === selectedTeamId;
         if (!matchesTeam) return false;
+
+        // 1.1 Result filter (only wins / draws / losses for this team)
+        if (teamResultFilter) {
+          const outcome = getMatchResultForTeam(m, selectedTeamId);
+          if (outcome !== teamResultFilter) return false;
+        }
       }
 
-      // 2. Date filter
-      if (selectedDateStr) {
-        const d = new Date(m.date);
-        const yyyymmdd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-        if (yyyymmdd !== selectedDateStr) return false;
+      // 2. Jornada filter
+      if (selectedJornada) {
+        if (m.jornadaNumber) {
+          if (m.jornadaNumber !== selectedJornada.number) return false;
+        } else {
+          const d = new Date(m.date);
+          const yyyymmdd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+          if (!selectedJornada.dates.includes(yyyymmdd)) return false;
+        }
       }
 
       // 3. Search query
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const homeMatch = m.homeTeam.team.displayName.toLowerCase().includes(q) || m.homeTeam.team.abbreviation.toLowerCase().includes(q);
-        const awayMatch = m.awayTeam.team.displayName.toLowerCase().includes(q) || m.awayTeam.team.abbreviation.toLowerCase().includes(q);
+        const homeMatch = m.homeTeam.team?.displayName?.toLowerCase().includes(q) || m.homeTeam.team?.abbreviation?.toLowerCase().includes(q);
+        const awayMatch = m.awayTeam.team?.displayName?.toLowerCase().includes(q) || m.awayTeam.team?.abbreviation?.toLowerCase().includes(q);
         if (!homeMatch && !awayMatch) return false;
       }
 
       return true;
     });
-  }, [matches, selectedTeamId, selectedDateStr, searchQuery]);
+  }, [matches, selectedTeamId, teamResultFilter, selectedJornada, searchQuery, getMatchResultForTeam]);
 
   // Counts for tabs
   const recentCount = useMemo(() => {
-    return filteredMatches.filter(m => m.status.completed || m.status.state === 'post' || m.status.state === 'in').length;
+    return filteredMatches.filter(m => m.status?.completed || m.status?.state === 'post' || m.status?.state === 'in').length;
   }, [filteredMatches]);
 
   const upcomingCount = useMemo(() => {
-    return filteredMatches.filter(m => m.status.state === 'pre').length;
+    return filteredMatches.filter(m => m.status?.state === 'pre').length;
   }, [filteredMatches]);
 
-  const handleSelectDate = useCallback(async (dateStr: string | null) => {
-    setSelectedDateStr(dateStr);
-    if (!dateStr) return;
+  // Counts of results for the selected team
+  const teamMatchCounts = useMemo(() => {
+    if (!selectedTeamId) return undefined;
+    const forTeam = matches.filter(m => {
+      const homeId = m.homeTeam?.team?.id || m.homeTeam?.id;
+      const awayId = m.awayTeam?.team?.id || m.awayTeam?.id;
+      return homeId === selectedTeamId || awayId === selectedTeamId;
+    });
+    let wins = 0;
+    let draws = 0;
+    let losses = 0;
+    forTeam.forEach(m => {
+      const res = getMatchResultForTeam(m, selectedTeamId);
+      if (res === 'win') wins++;
+      else if (res === 'draw') draws++;
+      else if (res === 'loss') losses++;
+    });
+    return {
+      all: forTeam.length,
+      wins,
+      draws,
+      losses
+    };
+  }, [matches, selectedTeamId, getMatchResultForTeam]);
 
-    const hasMatchesForDate = matches.some(m => {
+  // Handle Jornada selection and fetch missing matches
+  const handleSelectJornada = useCallback(async (jornadaNumber: number | null) => {
+    setSelectedJornadaNumber(jornadaNumber);
+    if (jornadaNumber === null) return;
+
+    const targetJ = getJornadaByNumber(jornadaNumber);
+    if (!targetJ) return;
+
+    // Check if we already have matches loaded for this Jornada
+    const hasMatchesForJornada = matches.some(m => {
+      if (m.jornadaNumber === targetJ.number) return true;
       const d = new Date(m.date);
       const yyyymmdd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-      return yyyymmdd === dateStr;
+      return targetJ.dates.includes(yyyymmdd);
     });
 
-    if (!hasMatchesForDate) {
+    if (!hasMatchesForJornada) {
       try {
         setIsLoading(true);
-        const res = await fetchMatches(dateStr);
-        if (res.matches.length > 0) {
+        const newMatches = await fetchMatchesForJornada(targetJ);
+        if (newMatches.length > 0) {
           setMatches(prev => {
             const map = new Map<string, Match>();
             prev.forEach(m => map.set(m.id, m));
-            res.matches.forEach(m => map.set(m.id, m));
+            newMatches.forEach(m => map.set(m.id, m));
             return Array.from(map.values()).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
           });
         }
       } catch (e) {
-        console.warn('Could not fetch matches for date:', dateStr, e);
+        console.warn(`Could not fetch matches for Jornada ${jornadaNumber}:`, e);
       } finally {
         setIsLoading(false);
       }
     }
   }, [matches]);
 
-  // Handler for selecting team from standings
-  const handleSelectTeamFromStandings = (teamId: string) => {
+  // Handle team selection and load all matches for that team across the season
+  const handleSelectTeam = useCallback(async (teamId: string | null, resultFilter: TeamResultFilter = null) => {
     setSelectedTeamId(teamId);
+    setTeamResultFilter(resultFilter);
+
+    if (teamId) {
+      // When a team is selected, show all games for this team (not just current jornada)
+      setSelectedJornadaNumber(null);
+
+      try {
+        setIsLoading(true);
+        const teamMatches = await fetchMatchesForTeam(teamId);
+        if (teamMatches.length > 0) {
+          setMatches(prev => {
+            const map = new Map<string, Match>();
+            prev.forEach(m => map.set(m.id, m));
+            teamMatches.forEach(m => map.set(m.id, m));
+            return Array.from(map.values()).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+          });
+        }
+      } catch (e) {
+        console.warn(`Could not load all matches for team ${teamId}:`, e);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  }, []);
+
+  // Handler for selecting team and optional result filter from standings
+  const handleSelectTeamFromStandings = (teamId: string, resultFilter?: TeamResultFilter) => {
+    handleSelectTeam(teamId, resultFilter || null);
     setActiveTab('matches');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -229,11 +324,15 @@ export const App: React.FC = () => {
               matchSubTab={matchSubTab}
               onSubTabChange={setMatchSubTab}
               selectedTeamId={selectedTeamId}
-              onSelectTeam={setSelectedTeamId}
-              selectedDateStr={selectedDateStr}
-              onSelectDate={handleSelectDate}
+              onSelectTeam={(teamId) => handleSelectTeam(teamId, null)}
+              teamResultFilter={teamResultFilter}
+              onSelectTeamResultFilter={setTeamResultFilter}
+              teamMatchCounts={teamMatchCounts}
+              selectedJornadaNumber={selectedJornadaNumber}
+              onSelectJornada={handleSelectJornada}
               teams={allTeams}
-              calendarDates={effectiveCalendarDates}
+              jornadas={allJornadas}
+              currentJornadaNumber={currentJornada.number}
               totalMatchesCount={filteredMatches.length}
               recentCount={recentCount}
               upcomingCount={upcomingCount}
@@ -243,6 +342,10 @@ export const App: React.FC = () => {
             <MainView
               matches={filteredMatches}
               matchSubTab={matchSubTab}
+              selectedJornada={selectedJornada}
+              selectedTeamName={selectedTeamId ? allTeams.find(t => t.id === selectedTeamId)?.displayName : undefined}
+              teamResultFilter={teamResultFilter}
+              onClearTeamResultFilter={() => setTeamResultFilter(null)}
               onOpenDetails={handleOpenDetails}
               onOpenHighlights={handleOpenHighlights}
             />

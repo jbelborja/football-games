@@ -1,11 +1,15 @@
 import React from 'react';
 import { Radio, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
 import { MatchCard } from './MatchCard';
-import { Match } from '../types/football';
+import { Match, Jornada, TeamResultFilter } from '../types/football';
 
 interface MainViewProps {
   matches: Match[];
   matchSubTab: 'all' | 'recent' | 'upcoming';
+  selectedJornada?: Jornada | null;
+  selectedTeamName?: string;
+  teamResultFilter?: TeamResultFilter;
+  onClearTeamResultFilter?: () => void;
   onOpenDetails: (match: Match) => void;
   onOpenHighlights: (match: Match) => void;
 }
@@ -13,6 +17,10 @@ interface MainViewProps {
 export const MainView: React.FC<MainViewProps> = ({
   matches,
   matchSubTab,
+  selectedJornada,
+  selectedTeamName,
+  teamResultFilter,
+  onClearTeamResultFilter,
   onOpenDetails,
   onOpenHighlights
 }) => {
@@ -30,14 +38,63 @@ export const MainView: React.FC<MainViewProps> = ({
         <AlertCircle className="w-10 h-10 text-slate-500 mx-auto mb-3" />
         <h3 className="text-base font-semibold text-slate-200">No se encontraron partidos</h3>
         <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-          Prueba a cambiar o limpiar los filtros de equipo y fecha para ver más jornadas.
+          {teamResultFilter && selectedTeamName
+            ? `No hay partidos con resultado de ${teamResultFilter === 'win' ? 'victoria' : teamResultFilter === 'draw' ? 'empate' : 'derrota'} para ${selectedTeamName} con los filtros actuales.`
+            : selectedJornada
+            ? `No hay partidos que coincidan con los filtros en la ${selectedJornada.label}. Prueba a seleccionar otra jornada o todos los equipos.`
+            : 'Prueba a cambiar o limpiar los filtros de equipo y jornada.'}
         </p>
+        {teamResultFilter && onClearTeamResultFilter && (
+          <button
+            onClick={onClearTeamResultFilter}
+            className="mt-3 text-xs text-indigo-400 hover:text-indigo-300 underline font-medium"
+          >
+            Ver todos los partidos de {selectedTeamName || 'este equipo'}
+          </button>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
+      {/* Selected Jornada contextual banner */}
+      {selectedJornada && (
+        <div className="flex items-center justify-between px-3.5 py-2 bg-slate-900/60 rounded-xl border border-slate-800/80 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-slate-100">{selectedJornada.label}</span>
+            <span className="text-slate-400">• {selectedJornada.dateRange}</span>
+            {selectedJornada.isCurrent && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30">
+                Jornada Actual
+              </span>
+            )}
+          </div>
+          <span className="text-slate-400 font-medium">
+            {matches.length} {matches.length === 1 ? 'partido' : 'partidos'}
+          </span>
+        </div>
+      )}
+
+      {/* Selected Team Result filter banner */}
+      {teamResultFilter && selectedTeamName && (
+        <div className="flex items-center justify-between px-3.5 py-2.5 bg-indigo-950/40 rounded-xl border border-indigo-800/60 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-indigo-400"></span>
+            <span className="text-slate-300">
+              Mostrando solo <span className="font-bold text-white uppercase">{teamResultFilter === 'win' ? 'victorias (G)' : teamResultFilter === 'draw' ? 'empates (E)' : 'derrotas (L)'}</span> de <span className="font-bold text-indigo-200">{selectedTeamName}</span>
+            </span>
+          </div>
+          {onClearTeamResultFilter && (
+            <button
+              onClick={onClearTeamResultFilter}
+              className="px-2.5 py-1 rounded text-[11px] font-semibold bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 hover:text-white border border-indigo-500/30 transition-colors"
+            >
+              Ver todos los partidos
+            </button>
+          )}
+        </div>
+      )}
       {/* 1. LIVE MATCHES (always top priority if any) */}
       {liveMatches.length > 0 && (matchSubTab === 'all' || matchSubTab === 'recent') && (
         <section className="space-y-3">

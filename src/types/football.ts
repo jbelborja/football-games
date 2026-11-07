@@ -78,6 +78,14 @@ export interface Match {
   recapDescription?: string;
   youtubeHighlightUrl: string;
   espnMatchUrl: string;
+  jornadaNumber?: number;
+}
+
+export interface FormMatch {
+  result: 'G' | 'E' | 'L';
+  score?: string;
+  opponent?: string;
+  date?: string;
 }
 
 export interface StandingsTeamEntry {
@@ -93,8 +101,18 @@ export interface StandingsTeamEntry {
   goalDiff: number;
   points: number;
   form?: string;
+  formMatches?: FormMatch[];
   noteColor?: string;
   noteDescription?: string;
+}
+
+export interface Jornada {
+  number: number;
+  label: string;       // "Jornada 12"
+  shortLabel: string;  // "J12"
+  dateRange: string;   // "6 - 8 nov"
+  dates: string[];     // ['20261106', '20261107', '20261108']
+  isCurrent?: boolean;
 }
 
 export interface JornadaDate {
@@ -103,9 +121,12 @@ export interface JornadaDate {
   matchCount?: number;
 }
 
+export type TeamResultFilter = 'win' | 'draw' | 'loss' | null;
+
 export interface FilterState {
   teamId: string | null;
-  dateStr: string | null;
+  jornadaNumber: number | null;
+  teamResultFilter?: TeamResultFilter;
   searchQuery: string;
   tab: 'matches' | 'standings';
   matchSubTab: 'all' | 'recent' | 'upcoming';
