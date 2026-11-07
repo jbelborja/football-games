@@ -5,14 +5,14 @@ import { Jornada } from '../types/football';
  * Agrupa todos los 380 partidos en sus respectivas jornadas con fechas YYYYMMDD.
  */
 export const LALIGA_JORNADAS: Jornada[] = [
-  { number: 1, label: 'Jornada 1', shortLabel: 'J1', dateRange: '15 - 19 ago', dates: ['20260815', '20260816', '20260817', '20260819'] },
-  { number: 2, label: 'Jornada 2', shortLabel: 'J2', dateRange: '20 - 27 ago', dates: ['20260820', '20260821', '20260822', '20260823', '20260824', '20260825', '20260826', '20260827'] },
+  { number: 1, label: 'Jornada 1', shortLabel: 'J1', dateRange: '15 - 27 ago', dates: ['20260815', '20260816', '20260817', '20260819', '20260825', '20260826', '20260827'] },
+  { number: 2, label: 'Jornada 2', shortLabel: 'J2', dateRange: '20 - 24 ago', dates: ['20260820', '20260821', '20260822', '20260823', '20260824'] },
   { number: 3, label: 'Jornada 3', shortLabel: 'J3', dateRange: '28 - 31 ago', dates: ['20260828', '20260829', '20260830', '20260831'] },
   { number: 4, label: 'Jornada 4', shortLabel: 'J4', dateRange: '3 - 7 sep', dates: ['20260903', '20260904', '20260905', '20260906', '20260907'] },
   { number: 5, label: 'Jornada 5', shortLabel: 'J5', dateRange: '11 - 14 sep', dates: ['20260911', '20260912', '20260913', '20260914'] },
-  { number: 6, label: 'Jornada 6', shortLabel: 'J6', dateRange: '15 - 17 sep', dates: ['20260915', '20260916', '20260917'] },
+  { number: 6, label: 'Jornada 6', shortLabel: 'J6', dateRange: '15 - 17 sep', dates: ['20260915', '20260916', '20260917', '20261021'] },
   { number: 7, label: 'Jornada 7', shortLabel: 'J7', dateRange: '18 - 20 sep', dates: ['20260918', '20260919', '20260920'] },
-  { number: 8, label: 'Jornada 8', shortLabel: 'J8', dateRange: '9 - 12 oct', dates: ['20261009', '20261010', '20261011', '20261012', '20261021'] },
+  { number: 8, label: 'Jornada 8', shortLabel: 'J8', dateRange: '9 - 12 oct', dates: ['20261009', '20261010', '20261011', '20261012'] },
   { number: 9, label: 'Jornada 9', shortLabel: 'J9', dateRange: '16 - 19 oct', dates: ['20261016', '20261017', '20261018', '20261019'] },
   { number: 10, label: 'Jornada 10', shortLabel: 'J10', dateRange: '23 - 26 oct', dates: ['20261023', '20261024', '20261025', '20261026'] },
   { number: 11, label: 'Jornada 11', shortLabel: 'J11', dateRange: '30 oct - 2 nov', dates: ['20261030', '20261031', '20261101', '20261102'] },
@@ -125,3 +125,38 @@ export function getJornadaForDate(dateStrOrIso: string): Jornada | undefined {
 
   return LALIGA_JORNADAS.find(j => j.dates.includes(yyyymmdd));
 }
+
+/**
+ * Determina con precisión matemática la jornada oficial de LaLiga a partir del ID de partido en ESPN.
+ * Los 380 partidos oficiales de la temporada tienen IDs contiguos que decrementan de 10 en 10 por jornada:
+ * Jornada 1: 401882926 - 401882917
+ * Jornada 2: 401882916 - 401882907
+ * ...
+ * Jornada 38: 401882556 - 401882547
+ * Esto garantiza que partidos aplazados o disputados entre semana se asignen siempre
+ * a su jornada liguera correcta, evitando que aparezcan equipos jugando 2 veces por jornada.
+ */
+export function getJornadaFromMatchId(id: string | number): number | undefined {
+  const numId = Number(id);
+  if (isNaN(numId)) return undefined;
+  const offset = 401882926 - numId;
+  if (offset >= 0 && offset < 380) {
+    return 1 + Math.floor(offset / 10);
+  }
+  return undefined;
+}
+
+/**
+ * Resuelve la jornada de un partido: utiliza prioritariamente el ID oficial del partido
+ * (que no se altera por aplazamientos entre semana) y recurre a la fecha si el ID no es determinista.
+ */
+export function getJornadaForMatch(match: { id?: string | number; date: string }): Jornada | undefined {
+  if (match.id) {
+    const jNum = getJornadaFromMatchId(match.id);
+    if (jNum !== undefined) {
+      return getJornadaByNumber(jNum);
+    }
+  }
+  return getJornadaForDate(match.date);
+}
+

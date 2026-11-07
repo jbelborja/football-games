@@ -1,5 +1,5 @@
 import { Match, StandingsTeamEntry, JornadaDate, MatchDetailEvent, HighlightVideo, Jornada, FormMatch } from '../types/football';
-import { getJornadaForDate, getCurrentJornada, getJornadaByNumber, toYYYYMMDD, LALIGA_JORNADAS } from './jornadas';
+import { getJornadaForMatch, getCurrentJornada, getJornadaByNumber, toYYYYMMDD, LALIGA_JORNADAS } from './jornadas';
 
 const BASE_URL = 'https://site.api.espn.com';
 const PROXY_URL = '/api/espn';
@@ -188,7 +188,7 @@ function parseEvent(ev: any): Match | null {
       recapDescription: headlineItem?.description,
       youtubeHighlightUrl,
       espnMatchUrl: espnMatchLink,
-      jornadaNumber: getJornadaForDate(ev.date)?.number
+      jornadaNumber: getJornadaForMatch({ id: ev.id, date: ev.date })?.number
     };
   } catch (err) {
     console.error('Error parsing match event:', err);
@@ -378,23 +378,42 @@ export async function fetchMatchesForJornada(jornada: Jornada): Promise<Match[]>
       .map(ev => parseEvent(ev))
       .filter((m: Match | null): m is Match => m !== null);
 
-    // Explicitly guarantee every match in this batch has the correct jornadaNumber
+    // Filter to only matches that genuinely belong to this Jornada (resolving midweek / postponed matches)
+    const validJornadaMatches: Match[] = [];
+    const seenTeamsInJornada = new Set<string>();
+
     matches.forEach(m => {
-      m.jornadaNumber = jornada.number;
+      const matchJ = m.jornadaNumber || getJornadaForMatch(m)?.number;
+      if (matchJ === jornada.number) {
+        const homeId = m.homeTeam?.team?.id || m.homeTeam?.id;
+        const awayId = m.awayTeam?.team?.id || m.awayTeam?.id;
+        if (homeId && awayId) {
+          // Guarantee no team plays twice in the same jornada
+          if (!seenTeamsInJornada.has(homeId) && !seenTeamsInJornada.has(awayId)) {
+            seenTeamsInJornada.add(homeId);
+            seenTeamsInJornada.add(awayId);
+            m.jornadaNumber = jornada.number;
+            validJornadaMatches.push(m);
+          }
+        } else {
+          m.jornadaNumber = jornada.number;
+          validJornadaMatches.push(m);
+        }
+      }
     });
 
-    matches.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    validJornadaMatches.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     try {
       localStorage.setItem(cacheKey, JSON.stringify({
-        matches,
+        matches: validJornadaMatches,
         lastUpdated: new Date().toISOString()
       }));
     } catch {
       // ignore
     }
 
-    return matches;
+    return validJornadaMatches;
   } catch (error) {
     console.warn(`Failed to fetch matches for Jornada ${jornada.number}, checking cache...`, error);
     const cached = localStorage.getItem(cacheKey);

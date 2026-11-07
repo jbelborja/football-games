@@ -8,7 +8,7 @@ import { InstallGuideModal } from './components/InstallGuideModal';
 import { fetchMatches, fetchStandings, fetchMatchesForJornada, fetchMatchesForTeam } from './services/footballApi';
 import { FALLBACK_MATCHES, FALLBACK_STANDINGS } from './services/fallbackData';
 import { Match, StandingsTeamEntry, Team, TeamResultFilter } from './types/football';
-import { getAllJornadas, getCurrentJornada, getJornadaByNumber } from './services/jornadas';
+import { getAllJornadas, getCurrentJornada, getJornadaByNumber, getJornadaForMatch } from './services/jornadas';
 
 export const App: React.FC = () => {
   const [matches, setMatches] = useState<Match[]>([]);
@@ -148,7 +148,7 @@ export const App: React.FC = () => {
     // appeared for the team before the full-season fetch completed.
     const baseMatches = selectedTeamId && teamSpecificMatches ? teamSpecificMatches : matches;
 
-    return baseMatches.filter(m => {
+    const preliminary = baseMatches.filter(m => {
       if (!m || !m.homeTeam || !m.awayTeam) return false;
 
       // 1. Team filter — only needed when using the global matches base
@@ -166,29 +166,27 @@ export const App: React.FC = () => {
 
       // 2. Jornada filter
       if (selectedJornada) {
-        // For single-day jornadas (J15-J38, all on a Sunday or Wednesday) ESPN may spread
-        // the 10 games across Fri-Mon or Tue-Thu. We expand the window by ±2 days so
-        // matches aren't missed just because the jornada entry only lists the main day.
-        let jornadaDates: string[];
-        if (selectedJornada.dates.length === 1) {
-          const d0 = selectedJornada.dates[0];
-          const y = parseInt(d0.substring(0, 4));
-          const mo = parseInt(d0.substring(4, 6)) - 1;
-          const dy = parseInt(d0.substring(6, 8));
-          jornadaDates = [];
-          for (let off = -2; off <= 2; off++) {
-            const dt = new Date(Date.UTC(y, mo, dy + off));
-            jornadaDates.push(
-              `${dt.getUTCFullYear()}${String(dt.getUTCMonth() + 1).padStart(2, '0')}${String(dt.getUTCDate()).padStart(2, '0')}`
-            );
+        const matchJornadaNum = m.jornadaNumber || getJornadaForMatch(m)?.number;
+        if (matchJornadaNum !== undefined) {
+          if (matchJornadaNum !== selectedJornada.number) return false;
+        } else {
+          let jornadaDates: string[];
+          if (selectedJornada.dates.length === 1) {
+            const d0 = selectedJornada.dates[0];
+            const y = parseInt(d0.substring(0, 4));
+            const mo = parseInt(d0.substring(4, 6)) - 1;
+            const dy = parseInt(d0.substring(6, 8));
+            jornadaDates = [];
+            for (let off = -2; off <= 2; off++) {
+              const dt = new Date(Date.UTC(y, mo, dy + off));
+              jornadaDates.push(
+                `${dt.getUTCFullYear()}${String(dt.getUTCMonth() + 1).padStart(2, '0')}${String(dt.getUTCDate()).padStart(2, '0')}`
+              );
+            }
+          } else {
+            jornadaDates = selectedJornada.dates;
           }
-        } else {
-          jornadaDates = selectedJornada.dates;
-        }
 
-        if (m.jornadaNumber) {
-          if (m.jornadaNumber !== selectedJornada.number) return false;
-        } else {
           const d = new Date(m.date);
           const yyyymmdd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
           if (!jornadaDates.includes(yyyymmdd)) return false;
@@ -205,6 +203,30 @@ export const App: React.FC = () => {
 
       return true;
     });
+
+    // In LaLiga, each team plays at most once per Jornada.
+    // If viewing a specific Jornada (and no individual team is selected), strictly deduplicate
+    // teams to eliminate any matches wrongly shown due to midweek/rescheduled fixtures.
+    if (selectedJornada && !selectedTeamId) {
+      const seenTeams = new Set<string>();
+      const deduplicated: Match[] = [];
+      preliminary.forEach(m => {
+        const homeId = m.homeTeam?.team?.id || m.homeTeam?.id;
+        const awayId = m.awayTeam?.team?.id || m.awayTeam?.id;
+        if (homeId && awayId) {
+          if (!seenTeams.has(homeId) && !seenTeams.has(awayId)) {
+            seenTeams.add(homeId);
+            seenTeams.add(awayId);
+            deduplicated.push(m);
+          }
+        } else {
+          deduplicated.push(m);
+        }
+      });
+      return deduplicated;
+    }
+
+    return preliminary;
   }, [matches, teamSpecificMatches, selectedTeamId, teamResultFilter, selectedJornada, searchQuery, getMatchResultForTeam]);
 
   // Counts for tabs
@@ -275,10 +297,8 @@ export const App: React.FC = () => {
 
     // Check if we already have a full batch of matches (at least 8) loaded for this Jornada
     const matchesInJornada = matches.filter(m => {
-      if (m.jornadaNumber === targetJ.number) return true;
-      const d = new Date(m.date);
-      const yyyymmdd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-      return jornadaCheckDates.includes(yyyymmdd);
+      const matchJ = m.jornadaNumber || getJornadaForMatch(m)?.number;
+      return matchJ === targetJ.number;
     });
 
     const hasFullMatchesForJornada = matchesInJornada.length >= 8;
